@@ -7,7 +7,7 @@ export const ROUNDS = [
   { name: 'SPEED SURGE', title: 'Go full throttle', color: '#56dfff', icon: '»', hint: 'Everyone moves faster. Cyan lanes give another boost.' },
   { name: 'FINAL SHIFT', title: 'The arena is shrinking', color: '#ff6a77', icon: '⌗', hint: 'Stay within the closing ring to survive.' },
 ]
-export type Player = { name: string; color: string; x: number; y: number; score: number; scoreTick?: number; active: boolean; seat: number; ready: boolean }
+export type Player = { name: string; color: string; x: number; y: number; score: number; scoreTick?: number; active: boolean; seat: number; ready: boolean; kicked?: boolean }
 export type Game = { status: 'playing' | 'finished'; gameStartTime: number; seed: number }
 export type Room = { hostId: string; hostName?: string; visibility?: 'public' | 'private'; discoverable?: boolean; status: 'lobby' | 'playing' | 'finished'; createdAt: number; game?: Game; players?: Record<string, Player>; seats?: Record<string, string> }
 export const code = () => Math.random().toString(36).slice(2, 7).toUpperCase()

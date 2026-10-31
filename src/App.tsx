@@ -14,7 +14,7 @@ const friendlyRoomError = (error: unknown, fallback: string) => {
   const code = value?.code ?? ''
   const message = value?.message ?? ''
   if (/permission|unavailable|network|disconnected|internal|database\/|auth\//i.test(code) || value?.name === 'FirebaseError' || /FirebaseError|permission_denied|PERMISSION_DENIED|Firebase:/i.test(message)) return 'We couldn’t connect right now. Please try again.'
-  const safeMessages = [emptyRoomError, 'This match has already started.', 'This room is full (8/8).', 'Could not reserve a room. Please try again.', 'Firebase is blocking anonymous account creation. In Firebase Console, enable Authentication → Sign-in method → Anonymous. Also check Authentication → Settings → User actions and allow users to create accounts.', 'This site is not authorized for Firebase sign-in. Add its domain under Firebase Console → Authentication → Settings → Authorized domains.']
+  const safeMessages = [emptyRoomError, 'This match has already started.', 'This room is full (8/8).', 'Could not reserve a room. Please try again.', 'The room host removed you from this room.', 'Firebase is blocking anonymous account creation. In Firebase Console, enable Authentication → Sign-in method → Anonymous. Also check Authentication → Settings → User actions and allow users to create accounts.', 'This site is not authorized for Firebase sign-in. Add its domain under Firebase Console → Authentication → Settings → Authorized domains.']
   return safeMessages.includes(message) ? message : fallback
 }
 
@@ -146,6 +146,12 @@ export default function App() {
       if (!data) { setRoom(null); setError(emptyRoomError); setScreen('entry'); return }
       setError(current => current === 'Your connection was interrupted. Reconnecting...' ? '' : current)
       setRoom(data)
+      if (data.players?.[uid]?.kicked) {
+        localStorage.removeItem('chaos-circuit-room')
+        setError('The room host removed you from this room.')
+        setRoomCode(''); setRoom(null); setScreen('entry')
+        return
+      }
       if (data.hostId !== uid && data.players?.[data.hostId]?.active === false) {
         const successor = Object.entries(data.players ?? {}).filter(([, p]) => p.active).sort((a, b) => a[1].seat - b[1].seat)[0]?.[0]
         if (successor === uid) void runTransaction(ref(database, `rooms/${roomCode}/hostId`), current => current === data.hostId ? uid : undefined).then(result => {
@@ -233,7 +239,8 @@ export default function App() {
         if (!snapshot.exists()) throw new Error(emptyRoomError)
         const existing = snapshot.val() as Room
         if (existing.status !== 'lobby') throw new Error('This match has already started.')
-        if (existing.players?.[user.uid]) {
+        if (existing.players?.[user.uid]?.kicked) throw new Error('The room host removed you from this room.')
+        if (existing.players?.[user.uid] && existing.seats?.[String(existing.players[user.uid].seat)] === user.uid) {
           setRoomCode(code); setScreen(existing.status === 'lobby' ? 'lobby' : 'game')
           localStorage.setItem('chaos-circuit-room', code); localStorage.setItem('chaos-circuit-name', cleanName)
           await update(ref(db, `rooms/${code}/players/${user.uid}`), { active: true })
@@ -275,6 +282,20 @@ export default function App() {
   const copyCode = async () => {
     await navigator.clipboard?.writeText(roomCode)
     setCopied(true); window.setTimeout(() => setCopied(false), 1400)
+  }
+
+  const removePlayer = async (playerId: string, seat: number) => {
+    if (!db || !room || room.hostId !== uid || playerId === uid || room.status !== 'lobby') return
+    try {
+      await update(ref(db, `rooms/${roomCode}`), {
+        [`players/${playerId}/active`]: false,
+        [`players/${playerId}/kicked`]: true,
+        [`seats/${seat}`]: null,
+      })
+    } catch (e) {
+      console.error('Could not remove player:', e)
+      setError(friendlyRoomError(e, 'Could not remove that player. Please try again.'))
+    }
   }
 
   const goHome = () => {
@@ -351,7 +372,7 @@ export default function App() {
 
     {screen === 'entry' && <EntryScreen name={name} setName={setName} roomCode={roomCode} setRoomCode={setRoomCode} visibility={visibility} setVisibility={setVisibility} availableRooms={availableRooms} loadingRooms={loadingRooms} roomsError={roomsError} retryRooms={()=>{setRoomsRetry(n=>n+1);setLoadingRooms(true)}} onJoinRoom={code=>{setRoomCode(code);void joinExisting(code,name)}} mode={entryMode} setMode={setEntryMode} busy={busy} configured={firebaseReady} onCreate={()=>joinExisting('',name,true)} onJoin={()=>joinExisting(roomCode,name)} onBack={goHome}/>}
 
-    {screen === 'lobby' && <section className="stage lobby-stage"><div className="lobby-header"><div><div className="eyebrow"><span className="pulse-dot"/> PRE-MATCH LOBBY</div><h2>Assemble<br/><span className="gradient-text">your circuit.</span></h2></div><div className="room-token"><small>ROOM CODE</small><b>{roomCode}</b><button onClick={copyCode}>{copied?'COPIED ✓':'COPY ↗'}</button></div></div><div className="lobby-grid"><div className="panel roster-panel"><div className="panel-heading"><div><span className="section-kicker">THE LINEUP</span><h3>Players <span className="count-pill">{players.length}/8</span></h3></div><span className="live-tag"><i/> LIVE</span></div><div className="roster-scene"><div className="roster-list">{players.map(([id,p],i)=><div className={`roster-player ${id===uid?'is-you':''}`} key={id}><span className="player-rank">0{i+1}</span><span className="avatar" style={{'--player':p.color} as React.CSSProperties}>{p.name.slice(0,1).toUpperCase()}</span><span className="player-name">{p.name}{id===uid&&<small>YOU</small>}</span><span className="ready-state"><i/> READY</span>{id===room?.hostId&&<span className="host-chip">HOST</span>}</div>)}{Array.from({length:Math.max(0,2-players.length)},(_,i)=><div className="roster-player waiting" key={`wait${i}`}><span className="player-rank">0{players.length+i+1}</span><span className="avatar empty-avatar">＋</span><span className="player-name">Waiting for player<span className="loading-dots">...</span></span><span className="ready-state waiting-state">OPEN SLOT</span></div>)}</div><div className="lobby-mini-arena"><div className="mini-platform"><i/><i/><i/><i/><i/><i/><i/><i/><b>●</b><em>●</em><strong>●</strong></div><span>ARENA PREVIEW</span></div></div><div className="roster-bottom"><span>◉ MINIMUM 2 PLAYERS TO START</span><span>{8-players.length} SLOTS OPEN</span></div></div><div className="panel briefing-panel"><span className="section-kicker">MISSION BRIEF</span><h3>Three minutes.<br/><span className="gradient-text">Six rule changes.</span></h3><p>Survive the shifting arena, watch the clock, and stack points while everyone else scrambles.</p><div className="round-list">{ROUNDS.map((r,i)=><div key={r.name} style={{'--event':r.color} as React.CSSProperties}><span>0{i+1}</span><i>{r.icon}</i><b>{r.name}</b><small>00:{String(i*30).padStart(2,'0')}</small></div>)}</div><button className="primary-button start-button" onClick={()=>setScreen('controls')}><span>HOW TO PLAY / CONTROLS</span><span>↗</span></button></div></div></section>}
+    {screen === 'lobby' && <section className="stage lobby-stage"><div className="lobby-header"><div><div className="eyebrow"><span className="pulse-dot"/> PRE-MATCH LOBBY</div><h2>Assemble<br/><span className="gradient-text">your circuit.</span></h2></div><div className="room-token"><small>ROOM CODE</small><b>{roomCode}</b><button onClick={copyCode}>{copied?'COPIED ✓':'COPY ↗'}</button></div></div><div className="lobby-grid"><div className="panel roster-panel"><div className="panel-heading"><div><span className="section-kicker">THE LINEUP</span><h3>Players <span className="count-pill">{players.length}/8</span></h3></div><span className="live-tag"><i/> LIVE</span></div><div className="roster-scene"><div className="roster-list">{players.map(([id,p],i)=><div className={`roster-player ${id===uid?'is-you':''}`} key={id}><span className="player-rank">0{i+1}</span><span className="avatar" style={{'--player':p.color} as React.CSSProperties}>{p.name.slice(0,1).toUpperCase()}</span><span className="player-name">{p.name}{id===uid&&<small>YOU</small>}</span><span className="ready-state"><i/> READY</span>{id===room?.hostId&&<span className="host-chip">HOST</span>}{room?.hostId===uid&&id!==uid&&<button className="roster-kick" type="button" onClick={()=>void removePlayer(id,p.seat)}>REMOVE</button>}</div>)}{Array.from({length:Math.max(0,2-players.length)},(_,i)=><div className="roster-player waiting" key={`wait${i}`}><span className="player-rank">0{players.length+i+1}</span><span className="avatar empty-avatar">＋</span><span className="player-name">Waiting for player<span className="loading-dots">...</span></span><span className="ready-state waiting-state">OPEN SLOT</span></div>)}</div><div className="lobby-mini-arena"><div className="mini-platform"><i/><i/><i/><i/><i/><i/><i/><i/><b>●</b><em>●</em><strong>●</strong></div><span>ARENA PREVIEW</span></div></div><div className="roster-bottom"><span>◉ MINIMUM 2 PLAYERS TO START</span><span>{8-players.length} SLOTS OPEN</span></div></div><div className="panel briefing-panel"><span className="section-kicker">MISSION BRIEF</span><h3>Three minutes.<br/><span className="gradient-text">Six rule changes.</span></h3><p>Survive the shifting arena, watch the clock, and stack points while everyone else scrambles.</p><div className="round-list">{ROUNDS.map((r,i)=><div key={r.name} style={{'--event':r.color} as React.CSSProperties}><span>0{i+1}</span><i>{r.icon}</i><b>{r.name}</b><small>00:{String(i*30).padStart(2,'0')}</small></div>)}</div><button className="primary-button start-button" onClick={()=>setScreen('controls')}><span>HOW TO PLAY / CONTROLS</span><span>↗</span></button></div></div></section>}
 
     {screen === 'controls' && <ControlsScreen isHost={room?.hostId===uid} onBack={()=>setScreen('lobby')} onStart={startGame} players={players.length}/>}
 

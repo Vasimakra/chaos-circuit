@@ -12,3 +12,4 @@
 .available-room>button{min-height:40px}.available-rooms{min-width:0}.available-list{min-width:0}.available-room{min-width:0}
 @media(max-width:900px) and (min-width:651px){.entry-layout{gap:22px}.entry-card{padding:22px}.game-layout{grid-template-columns:minmax(0,1fr) 200px;gap:9px}.score-panel{padding:13px 11px}}
 @media(max-width:380px){.available-room{grid-template-columns:minmax(58px,1fr) auto auto;gap:4px;padding:7px}.available-room-meta span{font-size:6px}.available-room-meta small{font-size:5px}.available-room>button{min-height:44px;padding:0 6px}}
+.roster-kick{border:1px solid #ff668e55;background:#321823;color:#ff9bae;border-radius:4px;padding:5px 7px;font:7px 'DM Mono',monospace;letter-spacing:.08em}.roster-kick:hover{background:#522135;color:#fff}
