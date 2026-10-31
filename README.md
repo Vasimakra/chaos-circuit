@@ -45,6 +45,7 @@ The five values above are required; `.env.local` is ignored by Git. `VITE_FIREBA
 ## Realtime behavior and limits
 
 - Room codes are short and randomly generated. Seat claims are transactions over eight fixed seat records, preventing concurrent joins from exceeding room capacity. The rules require a matching seat claim before a new player record can be created.
+- Rooms can be created as public or private. Only authenticated queries for `discoverable === true` can browse the public list; private rooms remain joinable by exact code. The host clears the discoverable flag when starting, and restores it on a public rematch.
 - Anonymous Auth gives each browser a stable Firebase UID. Player movement writes are throttled to about 9 updates per second; animation remains local and remote positions interpolate in CSS.
 - The 180-second clock uses the shared database start timestamp plus Firebase's server-time offset. Round selection is derived from elapsed time, and focus/visibility changes trigger an immediate clock refresh.
 - Hazards and safe zones are derived from the shared match seed and elapsed segment, so all clients see the same layout.

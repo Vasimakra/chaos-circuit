@@ -24,8 +24,8 @@ export async function ensureIdentity() {
     return (await signInAnonymously(auth)).user
   } catch (error) {
     const code = (error as { code?: string }).code
-    if (code === 'auth/operation-not-allowed') {
-      throw new Error('Firebase Anonymous sign-in is disabled. In Firebase Console, open Authentication → Sign-in method → Anonymous, enable it, and save.')
+    if (code === 'auth/operation-not-allowed' || code === 'auth/admin-restricted-operation') {
+      throw new Error('Firebase is blocking anonymous account creation. In Firebase Console, enable Authentication → Sign-in method → Anonymous. Also check Authentication → Settings → User actions and allow users to create accounts.')
     }
     if (code === 'auth/unauthorized-domain') {
       throw new Error('This site is not authorized for Firebase sign-in. Add its domain under Firebase Console → Authentication → Settings → Authorized domains.')

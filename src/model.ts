@@ -9,7 +9,7 @@ export const ROUNDS = [
 ]
 export type Player = { name: string; color: string; x: number; y: number; score: number; scoreTick?: number; active: boolean; seat: number; ready: boolean }
 export type Game = { status: 'playing' | 'finished'; gameStartTime: number; seed: number }
-export type Room = { hostId: string; status: 'lobby' | 'playing' | 'finished'; createdAt: number; game?: Game; players?: Record<string, Player>; seats?: Record<string, string> }
+export type Room = { hostId: string; hostName?: string; visibility?: 'public' | 'private'; discoverable?: boolean; status: 'lobby' | 'playing' | 'finished'; createdAt: number; game?: Game; players?: Record<string, Player>; seats?: Record<string, string> }
 export const code = () => Math.random().toString(36).slice(2, 7).toUpperCase()
 export const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n))
 export const elapsedFor = (game: Game | undefined, now: number) => game ? Math.max(0, (now - game.gameStartTime) / 1000) : 0

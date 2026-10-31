@@ -3,15 +3,21 @@
     ".read": false,
     ".write": false,
     "rooms": {
+      ".read": "auth != null && query.orderByChild === 'discoverable' && query.equalTo === true",
+      ".indexOn": ["discoverable"],
       "$room": {
         ".read": "auth != null",
         ".write": "auth != null && !data.exists()",
-        ".validate": "newData.hasChildren(['hostId','status','players','seats']) && newData.child('hostId').val() === auth.uid && newData.child('status').val() === 'lobby'",
+        ".validate": "newData.hasChildren(['hostId','status','players','seats']) && newData.child('hostId').val() === auth.uid && (newData.child('status').val() === 'lobby' || newData.child('status').val() === 'playing' || newData.child('status').val() === 'finished')",
         "hostId": {
           ".write": "auth != null && (data.val() === auth.uid || (newData.val() === auth.uid && root.child('rooms').child($room).child('players').child(data.val()).child('active').val() === false))"
         },
         "status": {
           ".write": "auth != null && root.child('rooms').child($room).child('hostId').val() === auth.uid"
+        },
+        "discoverable": {
+          ".write": "auth != null && root.child('rooms').child($room).child('hostId').val() === auth.uid",
+          ".validate": "newData.val() === (newData.parent().child('visibility').val() === 'public' && newData.parent().child('status').val() === 'lobby' && !newData.parent().child('game').exists())"
         },
         "createdAt": { ".write": "auth != null && !data.exists()" },
         "game": {

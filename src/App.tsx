@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { get, onDisconnect, onValue, ref, runTransaction, serverTimestamp, set, update } from 'firebase/database'
+import { equalTo, get, onDisconnect, onValue, orderByChild, query, ref, runTransaction, serverTimestamp, set, update } from 'firebase/database'
 import { db, ensureIdentity, firebaseReady } from './firebase'
 import EntryScreen from './EntryScreen'
 import ControlsScreen from './ControlsScreen'
@@ -9,12 +9,24 @@ import type { Player, Room } from './model'
 type Screen = 'home' | 'entry' | 'lobby' | 'controls' | 'game' | 'results'
 const emptyRoomError = 'Room not found. Check the code and try again.'
 const pad = (n: number) => String(Math.floor(n / 60)).padStart(2, '0') + ':' + String(n % 60).padStart(2, '0')
+const friendlyRoomError = (error: unknown, fallback: string) => {
+  const value = error as { code?: string; message?: string; name?: string }
+  const code = value?.code ?? ''
+  const message = value?.message ?? ''
+  if (/permission|unavailable|network|disconnected/i.test(code) || value?.name === 'FirebaseError' || /^Firebase:/i.test(message)) return 'We couldn’t connect right now. Please try again.'
+  return message || fallback
+}
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>('home')
   const [entryMode, setEntryMode] = useState<'create' | 'join'>('create')
   const [name, setName] = useState('')
   const [roomCode, setRoomCode] = useState('')
+  const [visibility, setVisibility] = useState<'public' | 'private'>('public')
+  const [availableRooms, setAvailableRooms] = useState<{ code: string; hostName: string; count: number }[]>([])
+  const [loadingRooms, setLoadingRooms] = useState(false)
+  const [roomsError, setRoomsError] = useState('')
+  const [roomsRetry, setRoomsRetry] = useState(0)
   const [room, setRoom] = useState<Room | null>(null)
   const [uid, setUid] = useState('')
   const [offset, setOffset] = useState(0)
@@ -55,6 +67,34 @@ export default function App() {
     window.addEventListener('focus', refresh)
     return () => { off(); clearInterval(timer); document.removeEventListener('visibilitychange', refresh); window.removeEventListener('focus', refresh) }
   }, [])
+
+  useEffect(() => {
+    if (!db || screen !== 'entry' || entryMode !== 'join') return
+    const database = db
+    let stopped = false
+    let unsubscribe: (() => void) | undefined
+    setLoadingRooms(true); setRoomsError('')
+    void ensureIdentity().then(user => {
+      if (stopped) return
+      setUid(user.uid)
+      const publicRoomsQuery = query(ref(database, 'rooms'), orderByChild('discoverable'), equalTo(true))
+      unsubscribe = onValue(publicRoomsQuery, snapshot => {
+        const rows = Object.entries((snapshot.val() ?? {}) as Record<string, Room>).flatMap(([code, item]) => {
+          const people = Object.values(item.players ?? {}).filter(player => player.active).length
+          if (item.visibility !== 'public' || item.status !== 'lobby' || item.game || people >= 8 || Object.keys(item.seats ?? {}).length >= 8 || !item.hostName) return []
+          return [{ code, hostName: item.hostName, count: people }]
+        }).sort((a, b) => a.code.localeCompare(b.code))
+        setAvailableRooms(rows); setLoadingRooms(false); setRoomsError('')
+      }, err => {
+        console.error('Available rooms listener failed:', err)
+        setAvailableRooms([]); setLoadingRooms(false); setRoomsError('ROOMS TEMPORARILY UNAVAILABLE')
+      })
+    }).catch(err => {
+      console.error('Could not authenticate to browse rooms:', err)
+      if (!stopped) { setLoadingRooms(false); setRoomsError('ROOMS TEMPORARILY UNAVAILABLE') }
+    })
+    return () => { stopped = true; unsubscribe?.() }
+  }, [screen, entryMode, roomsRetry])
 
   useEffect(() => {
     if (!db) return
@@ -148,7 +188,7 @@ export default function App() {
           const candidate = makeCode()
           const roomRef = ref(db, `rooms/${candidate}`)
           const result = await runTransaction(roomRef, current => current === null ? {
-            hostId: user.uid, status: 'lobby', createdAt: serverTimestamp(),
+            hostId: user.uid, hostName: cleanName, visibility, discoverable: visibility === 'public', status: 'lobby', createdAt: serverTimestamp(),
             seats: { 0: user.uid },
             players: { [user.uid]: { name: cleanName, color: COLORS[0], x: 50, y: 50, score: 0, scoreTick: 0, active: true, seat: 0, ready: true } },
           } : undefined)
@@ -187,16 +227,19 @@ export default function App() {
         localStorage.setItem('chaos-circuit-room', code); localStorage.setItem('chaos-circuit-name', cleanName)
         void onDisconnect(ref(db, `rooms/${code}/players/${user.uid}/active`)).set(false)
       }
-    } catch (e) { setError(e instanceof Error ? e.message : 'Something went wrong. Please retry.') }
+    } catch (e) {
+      console.error('Room action failed:', e)
+      setError(friendlyRoomError(e, 'Unable to complete that room action. Please try again.'))
+    }
     finally { setBusy(false) }
-  }, [])
+  }, [visibility])
 
   const startGame = async () => {
     if (!db || !room || players.length < 2 || room.hostId !== uid) return
     try {
       const gRef = ref(db, `rooms/${roomCode}/game`)
       const result = await runTransaction(gRef, current => current ? undefined : { status: 'playing', gameStartTime: serverTimestamp(), seed: Math.floor(Math.random() * 1e9) })
-      if (result.committed) await set(ref(db, `rooms/${roomCode}/status`), 'playing')
+      if (result.committed) await update(ref(db, `rooms/${roomCode}`), { status: 'playing', discoverable: false })
     } catch (e) { setError(e instanceof Error ? e.message : 'Could not start the match.') }
   }
 
@@ -215,8 +258,7 @@ export default function App() {
   }
   const replay = async () => {
     if (!db || room?.hostId !== uid) return
-    await set(ref(db, `rooms/${roomCode}/status`), 'lobby')
-    await set(ref(db, `rooms/${roomCode}/game`), null)
+    await update(ref(db, `rooms/${roomCode}`), { status: 'lobby', game: null, discoverable: room?.visibility === 'public' })
     await update(ref(db, `rooms/${roomCode}/players/${uid}`), { score: 0, scoreTick: 0, x: 50, y: 50, active: true })
     setLastRound(-1)
   }
@@ -276,7 +318,7 @@ export default function App() {
       <div className="landing-foot"><span>READY WHEN YOU ARE</span><span>WASD / ARROWS TO MOVE &nbsp;·&nbsp; SPACE TO DASH</span><span>EST. IN CHAOS <b>2026</b></span></div>
     </section>}
 
-    {screen === 'entry' && <EntryScreen name={name} setName={setName} roomCode={roomCode} setRoomCode={setRoomCode} mode={entryMode} setMode={setEntryMode} busy={busy} configured={firebaseReady} onCreate={()=>joinExisting('',name,true)} onJoin={()=>joinExisting(roomCode,name)} onBack={goHome}/>}
+    {screen === 'entry' && <EntryScreen name={name} setName={setName} roomCode={roomCode} setRoomCode={setRoomCode} visibility={visibility} setVisibility={setVisibility} availableRooms={availableRooms} loadingRooms={loadingRooms} roomsError={roomsError} retryRooms={()=>{setRoomsRetry(n=>n+1);setLoadingRooms(true)}} onJoinRoom={code=>{setRoomCode(code);void joinExisting(code,name)}} mode={entryMode} setMode={setEntryMode} busy={busy} configured={firebaseReady} onCreate={()=>joinExisting('',name,true)} onJoin={()=>joinExisting(roomCode,name)} onBack={goHome}/>}
 
     {screen === 'lobby' && <section className="stage lobby-stage"><div className="lobby-header"><div><div className="eyebrow"><span className="pulse-dot"/> PRE-MATCH LOBBY</div><h2>Assemble<br/><span className="gradient-text">your circuit.</span></h2></div><div className="room-token"><small>ROOM CODE</small><b>{roomCode}</b><button onClick={copyCode}>{copied?'COPIED ✓':'COPY ↗'}</button></div></div><div className="lobby-grid"><div className="panel roster-panel"><div className="panel-heading"><div><span className="section-kicker">THE LINEUP</span><h3>Players <span className="count-pill">{players.length}/8</span></h3></div><span className="live-tag"><i/> LIVE</span></div><div className="roster-scene"><div className="roster-list">{players.map(([id,p],i)=><div className={`roster-player ${id===uid?'is-you':''}`} key={id}><span className="player-rank">0{i+1}</span><span className="avatar" style={{'--player':p.color} as React.CSSProperties}>{p.name.slice(0,1).toUpperCase()}</span><span className="player-name">{p.name}{id===uid&&<small>YOU</small>}</span><span className="ready-state"><i/> READY</span>{id===room?.hostId&&<span className="host-chip">HOST</span>}</div>)}{Array.from({length:Math.max(0,2-players.length)},(_,i)=><div className="roster-player waiting" key={`wait${i}`}><span className="player-rank">0{players.length+i+1}</span><span className="avatar empty-avatar">＋</span><span className="player-name">Waiting for player<span className="loading-dots">...</span></span><span className="ready-state waiting-state">OPEN SLOT</span></div>)}</div><div className="lobby-mini-arena"><div className="mini-platform"><i/><i/><i/><i/><i/><i/><i/><i/><b>●</b><em>●</em><strong>●</strong></div><span>ARENA PREVIEW</span></div></div><div className="roster-bottom"><span>◉ MINIMUM 2 PLAYERS TO START</span><span>{8-players.length} SLOTS OPEN</span></div></div><div className="panel briefing-panel"><span className="section-kicker">MISSION BRIEF</span><h3>Three minutes.<br/><span className="gradient-text">Six rule changes.</span></h3><p>Survive the shifting arena, watch the clock, and stack points while everyone else scrambles.</p><div className="round-list">{ROUNDS.map((r,i)=><div key={r.name} style={{'--event':r.color} as React.CSSProperties}><span>0{i+1}</span><i>{r.icon}</i><b>{r.name}</b><small>00:{String(i*30).padStart(2,'0')}</small></div>)}</div><button className="primary-button start-button" onClick={()=>setScreen('controls')}><span>HOW TO PLAY / CONTROLS</span><span>↗</span></button></div></div></section>}
 
