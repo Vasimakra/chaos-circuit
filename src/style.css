@@ -14,3 +14,5 @@
 @media(max-width:380px){.available-room{grid-template-columns:minmax(58px,1fr) auto auto;gap:4px;padding:7px}.available-room-meta span{font-size:6px}.available-room-meta small{font-size:5px}.available-room>button{min-height:44px;padding:0 6px}}
 .roster-kick{border:1px solid #ff668e55;background:#321823;color:#ff9bae;border-radius:4px;padding:5px 7px;font:7px 'DM Mono',monospace;letter-spacing:.08em}.roster-kick:hover{background:#522135;color:#fff}
 .lobby-start{width:100%;margin-top:14px;justify-content:center;gap:12px}
+.lobby-room-actions{display:flex;align-items:center;gap:10px}.lobby-leave{border:1px solid #ff668e66;border-radius:5px;padding:10px 12px;background:#291723;color:#ff9bae;font:8px 'DM Mono',monospace;letter-spacing:.08em;white-space:nowrap}.lobby-leave:hover{background:#482033;color:#fff}
+@media(max-width:650px){.lobby-room-actions{align-items:stretch;flex-direction:column}.lobby-leave{min-height:39px}}
