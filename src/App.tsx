@@ -143,7 +143,7 @@ export default function App() {
     const database = db
     const unsub = onValue(ref(database, `rooms/${roomCode}`), snap => {
       const data = snap.val() as Room | null
-      if (!data) { setRoom(null); setError(emptyRoomError); setScreen('entry'); return }
+      if (!data) { localStorage.removeItem('chaos-circuit-room'); setRoom(null); setRoomCode(''); setError('The room host closed this room. Join another waiting room or enter a room code.'); setScreen('entry'); return }
       setError(current => current === 'Your connection was interrupted. Reconnecting...' ? '' : current)
       setRoom(data)
       if (data.players?.[uid]?.kicked) {
@@ -174,6 +174,21 @@ export default function App() {
     }, err => { console.error('Room listener failed:', err); setError('Your connection was interrupted. Reconnecting...') })
     return () => unsub()
   }, [roomCode, uid, offset, screen])
+
+  useEffect(() => {
+    const ownPlayer = room?.players?.[uid]
+    if (!db || !roomCode || !uid || !ownPlayer || ownPlayer.kicked || room?.status === 'finished') return
+    const activeRef = ref(db, `rooms/${roomCode}/players/${uid}/active`)
+    const connectedRef = ref(db, '.info/connected')
+    let stopped = false
+    const unsubscribe = onValue(connectedRef, snapshot => {
+      if (snapshot.val() !== true) return
+      void onDisconnect(activeRef).set(false).then(() => {
+        if (!stopped) return set(activeRef, true)
+      }).catch(error => console.error('Presence registration failed:', error))
+    })
+    return () => { stopped = true; unsubscribe() }
+  }, [roomCode, uid, Boolean(room?.players?.[uid]), room?.players?.[uid]?.kicked, room?.status])
 
   useEffect(() => {
     if (!room?.game || !uid || !db || !myRef || remaining <= 0) return
@@ -314,6 +329,7 @@ export default function App() {
       } else {
         const current = room?.players?.[uid]
         if (current) {
+          await onDisconnect(ref(db, `rooms/${roomCode}/players/${uid}/active`)).cancel()
           await update(ref(db, `rooms/${roomCode}/players/${uid}`), { active: false })
           await set(ref(db, `rooms/${roomCode}/seats/${current.seat}`), null)
         }
@@ -394,7 +410,7 @@ export default function App() {
 
     {screen === 'controls' && <ControlsScreen isHost={room?.hostId===uid} onBack={()=>setScreen('lobby')} onStart={startGame} players={players.length}/>}
 
-    {screen === 'game' && room?.game && <section className="game-stage"><div className="game-top"><button className="game-brand" onClick={()=>{prevScreen.current=screen}}><span className="brand-mark">C</span>CHAOS CIRCUIT</button><div className="round-indicator"><span style={{color:event.color}}>{event.icon}</span><div><small>ROUND 0{roundIndex+1} / 06</small><b>{event.name}</b></div></div><div className="timer-box"><small>TIME LEFT</small><b className={remaining<=15?'urgent':''}>{pad(remaining)}</b></div><div className="live-badge"><i/> LIVE MATCH</div></div><div className="event-banner" style={{'--event':event.color} as React.CSSProperties}><span>{event.icon}</span><div><b>{event.title}</b><small>{event.hint}</small></div><span className="event-time">{pad(remaining)}</span></div><div className="game-layout"><div className="arena-wrap"><div className={`arena arena-round-${roundIndex}`}>
+    {screen === 'game' && room?.game && <section className="game-stage"><div className="game-top"><button className="game-brand" onClick={()=>{prevScreen.current=screen}}><span className="brand-mark">C</span>CHAOS CIRCUIT</button><div className="round-indicator"><span style={{color:event.color}}>{event.icon}</span><div><small>ROUND 0{roundIndex+1} / 06</small><b>{event.name}</b></div></div><div className="timer-box"><small>TIME LEFT</small><b className={remaining<=15?'urgent':''}>{pad(remaining)}</b></div><div className="game-status-actions"><div className="live-badge"><i/> LIVE MATCH</div><button className="game-leave" type="button" onClick={()=>void leaveRoom()}>LEAVE ROOM</button></div></div><div className="event-banner" style={{'--event':event.color} as React.CSSProperties}><span>{event.icon}</span><div><b>{event.title}</b><small>{event.hint}</small></div><span className="event-time">{pad(remaining)}</span></div><div className="game-layout"><div className="arena-wrap"><div className={`arena arena-round-${roundIndex}`}>
       {roundIndex===0&&arena&&Array.from({length:35},(_,i)=>{const x=i%7,y=Math.floor(i/7);const hot=x===arena.tileX&&y===arena.tileY;return <div key={i} className={`tile ${hot?'danger-tile':''}`} style={{left:`${x*14.285}%`,top:`${y*20}%`}}/>})}
       {roundIndex===1&&arena&&<div className="safe-zone" style={{left:`${arena.safeX}%`,top:`${arena.safeY}%`}}><span>SAFE</span></div>}
       {roundIndex===3&&arena&&<><div className="moving-wall wall-one" style={{left:`${arena.wallX}%`}}/><div className="moving-wall wall-two" style={{left:`${100-arena.wallX/1.1}%`}}/></>}

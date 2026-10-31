@@ -16,3 +16,4 @@
 .lobby-start{width:100%;margin-top:14px;justify-content:center;gap:12px}
 .lobby-room-actions{display:flex;align-items:center;gap:10px}.lobby-leave{border:1px solid #ff668e66;border-radius:5px;padding:10px 12px;background:#291723;color:#ff9bae;font:8px 'DM Mono',monospace;letter-spacing:.08em;white-space:nowrap}.lobby-leave:hover{background:#482033;color:#fff}
 @media(max-width:650px){.lobby-room-actions{align-items:stretch;flex-direction:column}.lobby-leave{min-height:39px}}
+.game-status-actions{display:flex;align-items:center;gap:8px;margin-left:auto}.game-leave{border:1px solid #ff668e66;border-radius:4px;padding:8px 10px;background:#291723;color:#ff9bae;font:8px 'DM Mono',monospace;letter-spacing:.08em;white-space:nowrap}.game-leave:hover{background:#482033;color:#fff}
