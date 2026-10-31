@@ -13,8 +13,9 @@ const friendlyRoomError = (error: unknown, fallback: string) => {
   const value = error as { code?: string; message?: string; name?: string }
   const code = value?.code ?? ''
   const message = value?.message ?? ''
-  if (/permission|unavailable|network|disconnected/i.test(code) || value?.name === 'FirebaseError' || /^Firebase:/i.test(message)) return 'We couldn’t connect right now. Please try again.'
-  return message || fallback
+  if (/permission|unavailable|network|disconnected|internal|database\/|auth\//i.test(code) || value?.name === 'FirebaseError' || /FirebaseError|permission_denied|PERMISSION_DENIED|Firebase:/i.test(message)) return 'We couldn’t connect right now. Please try again.'
+  const safeMessages = [emptyRoomError, 'This match has already started.', 'This room is full (8/8).', 'Could not reserve a room. Please try again.', 'Firebase is blocking anonymous account creation. In Firebase Console, enable Authentication → Sign-in method → Anonymous. Also check Authentication → Settings → User actions and allow users to create accounts.', 'This site is not authorized for Firebase sign-in. Add its domain under Firebase Console → Authentication → Settings → Authorized domains.']
+  return safeMessages.includes(message) ? message : fallback
 }
 
 export default function App() {
@@ -30,6 +31,7 @@ export default function App() {
   const [room, setRoom] = useState<Room | null>(null)
   const [uid, setUid] = useState('')
   const [offset, setOffset] = useState(0)
+  const [connection, setConnection] = useState<'connecting' | 'connected' | 'reconnecting' | 'lost'>('connecting')
   const [now, setNow] = useState(Date.now())
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -44,6 +46,7 @@ export default function App() {
   const dashRef = useRef(0)
   const joystickRef = useRef<HTMLDivElement>(null)
   const prevScreen = useRef<Screen>('home')
+  const hasConnected = useRef(false)
 
   const me = room?.players?.[uid]
   const hasMe = Boolean(me)
@@ -61,12 +64,35 @@ export default function App() {
   useEffect(() => {
     if (!db) return
     const off = onValue(ref(db, '.info/serverTimeOffset'), snap => setOffset(Number(snap.val() ?? 0)))
+    let lostTimer = 0
+    const offConnection = onValue(ref(db, '.info/connected'), snap => {
+      if (snap.val() === true) {
+        hasConnected.current = true
+        window.clearTimeout(lostTimer)
+        setConnection('connected')
+        setNow(Date.now())
+      } else {
+        window.clearTimeout(lostTimer)
+        setConnection(hasConnected.current ? 'reconnecting' : 'connecting')
+        if (hasConnected.current) lostTimer = window.setTimeout(() => setConnection('lost'), 5000)
+      }
+    }, err => {
+      console.error('Firebase connection status failed:', err)
+      setConnection(hasConnected.current ? 'lost' : 'connecting')
+    })
     const timer = window.setInterval(() => setNow(Date.now()), 100)
     const refresh = () => setNow(Date.now())
     document.addEventListener('visibilitychange', refresh)
     window.addEventListener('focus', refresh)
-    return () => { off(); clearInterval(timer); document.removeEventListener('visibilitychange', refresh); window.removeEventListener('focus', refresh) }
+    return () => { off(); offConnection(); window.clearTimeout(lostTimer); clearInterval(timer); document.removeEventListener('visibilitychange', refresh); window.removeEventListener('focus', refresh) }
   }, [])
+
+  useEffect(() => {
+    if (connection !== 'connected' || !db || !roomCode) return
+    void get(ref(db, `rooms/${roomCode}`)).then(snapshot => {
+      if (snapshot.exists()) setRoom(snapshot.val() as Room)
+    }).catch(err => console.error('Room state resync failed:', err))
+  }, [connection, roomCode])
 
   useEffect(() => {
     if (!db || screen !== 'entry' || entryMode !== 'join') return
@@ -81,7 +107,7 @@ export default function App() {
       unsubscribe = onValue(publicRoomsQuery, snapshot => {
         const rows = Object.entries((snapshot.val() ?? {}) as Record<string, Room>).flatMap(([code, item]) => {
           const people = Object.values(item.players ?? {}).filter(player => player.active).length
-          if (item.visibility !== 'public' || item.status !== 'lobby' || item.game || people >= 8 || Object.keys(item.seats ?? {}).length >= 8 || !item.hostName) return []
+          if (item.visibility !== 'public' || item.status !== 'lobby' || item.game || people >= 8 || Object.keys(item.seats ?? {}).length >= 8 || !item.hostName || !item.players?.[item.hostId]?.active) return []
           return [{ code, hostName: item.hostName, count: people }]
         }).sort((a, b) => a.code.localeCompare(b.code))
         setAvailableRooms(rows); setLoadingRooms(false); setRoomsError('')
@@ -109,7 +135,7 @@ export default function App() {
       setUid(user.uid); setRoomCode(savedCode)
       await update(ref(database, `rooms/${savedCode}/players/${user.uid}`), { active: true })
       void onDisconnect(ref(database, `rooms/${savedCode}/players/${user.uid}/active`)).set(false)
-    }).catch(e => setError(e instanceof Error ? e.message : 'Could not restore the previous room.'))
+    }).catch(e => { console.error('Room restore failed:', e); setError(friendlyRoomError(e, 'Could not restore the previous room. Please try again.')) })
   }, [])
 
   useEffect(() => {
@@ -118,10 +144,13 @@ export default function App() {
     const unsub = onValue(ref(database, `rooms/${roomCode}`), snap => {
       const data = snap.val() as Room | null
       if (!data) { setRoom(null); setError(emptyRoomError); setScreen('entry'); return }
+      setError(current => current === 'Your connection was interrupted. Reconnecting...' ? '' : current)
       setRoom(data)
       if (data.hostId !== uid && data.players?.[data.hostId]?.active === false) {
         const successor = Object.entries(data.players ?? {}).filter(([, p]) => p.active).sort((a, b) => a[1].seat - b[1].seat)[0]?.[0]
-        if (successor === uid) void runTransaction(ref(database, `rooms/${roomCode}/hostId`), current => current === data.hostId ? uid : undefined)
+        if (successor === uid) void runTransaction(ref(database, `rooms/${roomCode}/hostId`), current => current === data.hostId ? uid : undefined).then(result => {
+          if (result.committed) void set(ref(database, `rooms/${roomCode}/hostName`), data.players?.[uid]?.name ?? 'Runner')
+        }).catch(err => console.error('Host reassignment failed:', err))
       }
       const ownPlayer = data.players?.[uid]
       if (data.status === 'lobby' && !data.game && ownPlayer && (ownPlayer.score !== 0 || ownPlayer.x !== 50 || ownPlayer.y !== 50 || !ownPlayer.active)) {
@@ -136,7 +165,7 @@ export default function App() {
       } else if (data.game?.status === 'playing') setScreen('game')
       else if (data.status === 'lobby' && data.players?.[uid]) setScreen(current => current === 'controls' ? current : 'lobby')
       else if (data.status === 'finished') setScreen('results')
-    }, err => setError(err.message))
+    }, err => { console.error('Room listener failed:', err); setError('Your connection was interrupted. Reconnecting...') })
     return () => unsub()
   }, [roomCode, uid, offset, screen])
 
@@ -240,7 +269,7 @@ export default function App() {
       const gRef = ref(db, `rooms/${roomCode}/game`)
       const result = await runTransaction(gRef, current => current ? undefined : { status: 'playing', gameStartTime: serverTimestamp(), seed: Math.floor(Math.random() * 1e9) })
       if (result.committed) await update(ref(db, `rooms/${roomCode}`), { status: 'playing', discoverable: false })
-    } catch (e) { setError(e instanceof Error ? e.message : 'Could not start the match.') }
+    } catch (e) { console.error('Start game failed:', e); setError(friendlyRoomError(e, 'Could not start the match. Please try again.')) }
   }
 
   const copyCode = async () => {
@@ -258,9 +287,11 @@ export default function App() {
   }
   const replay = async () => {
     if (!db || room?.hostId !== uid) return
-    await update(ref(db, `rooms/${roomCode}`), { status: 'lobby', game: null, discoverable: room?.visibility === 'public' })
-    await update(ref(db, `rooms/${roomCode}/players/${uid}`), { score: 0, scoreTick: 0, x: 50, y: 50, active: true })
-    setLastRound(-1)
+    try {
+      await update(ref(db, `rooms/${roomCode}`), { status: 'lobby', game: null, discoverable: room?.visibility === 'public' })
+      await update(ref(db, `rooms/${roomCode}/players/${uid}`), { score: 0, scoreTick: 0, x: 50, y: 50, active: true })
+      setLastRound(-1)
+    } catch (e) { console.error('Rematch reset failed:', e); setError(friendlyRoomError(e, 'Could not reset the match. Please try again.')) }
   }
 
   useEffect(() => {
@@ -307,7 +338,7 @@ export default function App() {
 
   return <main className="app-shell">
     <div className="ambient ambient-one"/><div className="ambient ambient-two"/>
-    <header className="topbar"><button className="brand" onClick={goHome}><span className="brand-mark">C</span><span>CHAOS<span className="brand-light"> CIRCUIT</span></span></button><div className="top-status"><span className={firebaseReady ? 'status-dot online' : 'status-dot'}/>{firebaseReady ? 'MULTIPLAYER ONLINE' : 'FIREBASE SETUP REQUIRED'}</div></header>
+    <header className="topbar"><button className="brand" onClick={goHome}><span className="brand-mark">C</span><span>CHAOS<span className="brand-light"> CIRCUIT</span></span></button><div className={`top-status connection-${firebaseReady ? connection : 'lost'}`} role="status" aria-live="polite"><span className={`status-dot ${connection==='connected'&&firebaseReady?'online':''}`}/>{!firebaseReady?'FIREBASE SETUP REQUIRED':connection==='connected'?'CONNECTED':connection==='lost'?'CONNECTION LOST':connection==='reconnecting'?'RECONNECTING...':'CONNECTING...'}</div></header>
 
     {screen === 'home' && <section className="landing">
       <div className="landing-copy"><div className="eyebrow"><span className="pulse-dot"/> LIVE MULTIPLAYER ARCADE</div><h1 className="hero-title"><span>CHAOS</span><span className="gradient-text">CIRCUIT</span></h1><div className="hero-subtitle">THE RULES KEEP CHANGING<span className="period">.</span></div><div className="hero-tagline">Can you keep up?</div><p className="hero-description">A fast-paced multiplayer arena where the rules never stay the same. Adapt fast. Outlast everyone.</p>

@@ -12,6 +12,9 @@
         "hostId": {
           ".write": "auth != null && (data.val() === auth.uid || (newData.val() === auth.uid && root.child('rooms').child($room).child('players').child(data.val()).child('active').val() === false))"
         },
+        "hostName": {
+          ".write": "auth != null && root.child('rooms').child($room).child('hostId').val() === auth.uid"
+        },
         "status": {
           ".write": "auth != null && root.child('rooms').child($room).child('hostId').val() === auth.uid"
         },
