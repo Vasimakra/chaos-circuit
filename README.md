@@ -5,10 +5,18 @@ A static React + TypeScript arcade game. The frontend is hosted on Netlify; Fire
 ## Run locally
 
 1. Install Node.js 20 or newer.
-2. Copy `.env.example` to `.env.local` and add the Firebase web app values.
+2. Create `.env.local` in the project root (beside `package.json`) with the five required Vite variables shown below, then paste each matching value from Firebase Console → Project settings → General → Your apps → SDK setup. Get the database URL from Realtime Database → Data.
 3. In Firebase Console, create a project, register a web app, enable **Authentication → Anonymous**, add `localhost` and your Netlify domain under **Authentication → Settings → Authorized domains**, and create a **Realtime Database**.
 4. In Realtime Database → Rules, paste the contents of `database.rules.json` and publish them.
-5. Run `npm install`, then `npm run dev`.
+5. If you create or change `.env.local` while Vite is already running, stop the dev server and restart it with `npm run dev`; Vite reads these variables at startup. Then run `npm install` if needed.
+
+```makefile
+VITE_FIREBASE_API_KEY=
+VITE_FIREBASE_AUTH_DOMAIN=
+VITE_FIREBASE_DATABASE_URL=
+VITE_FIREBASE_PROJECT_ID=
+VITE_FIREBASE_APP_ID=
+```
 
 The game requires Firebase configuration to create or join a room. The landing and setup screens still load without it.
 
@@ -24,7 +32,7 @@ Set these in `.env.local` for local development and in Netlify → Site configur
 | `VITE_FIREBASE_PROJECT_ID` | `projectId` |
 | `VITE_FIREBASE_APP_ID` | `appId` |
 
-These are browser app identifiers, not administrative credentials. Never put a service account key in the frontend.
+The five values above are required; `.env.local` is ignored by Git. `VITE_FIREBASE_STORAGE_BUCKET`, `VITE_FIREBASE_MESSAGING_SENDER_ID`, and `VITE_FIREBASE_MEASUREMENT_ID` are optional fields supported by the config. Never put a service account key or private key in the frontend or GitHub.
 
 ## Deploy to Netlify
 
