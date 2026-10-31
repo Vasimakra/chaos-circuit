@@ -330,8 +330,10 @@ export default function App() {
         const current = room?.players?.[uid]
         if (current) {
           await onDisconnect(ref(db, `rooms/${roomCode}/players/${uid}/active`)).cancel()
-          await update(ref(db, `rooms/${roomCode}/players/${uid}`), { active: false })
-          await set(ref(db, `rooms/${roomCode}/seats/${current.seat}`), null)
+          await update(ref(db, `rooms/${roomCode}`), {
+            [`players/${uid}`]: null,
+            [`seats/${current.seat}`]: null,
+          })
         }
       }
       localStorage.removeItem('chaos-circuit-room'); localStorage.removeItem('chaos-circuit-name'); setRoomCode(''); setRoom(null); setError(''); setLastRound(-1); setScreen('home')
